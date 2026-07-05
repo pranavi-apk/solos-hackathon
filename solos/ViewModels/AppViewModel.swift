@@ -372,25 +372,35 @@ final class AppViewModel {
         var session = RecipeSession(
             dishName: trimmed,
             photoAnalysis: "User asked by name — no photo.",
-            phase: .confirming,
+            phase: .questioning,
             clarifyingQuestionsAsked: 0
         )
-        let confirmation = session.confirmationPrompt
-        session.messages.append(RecipeMessage(role: .assistant, content: confirmation))
 
-        showRecipeResult = false
-        isBusy = false
-        recipeSession = session
-        currentSavedDishId = UUID()
-        saveCurrentSession()
-        showCoachChat = true
-        SoloChefLog.info("flow: coach chat opened (ask-by-name) dish=\(trimmed)")
+        do {
+            let isCantonese = LanguageManager.shared.current == .cantonese
+            let initialUserMsg = isCantonese 
+                ? "我想煮 \(trimmed)。請開始問我問題。" 
+                : "I want to cook \(trimmed). Please ask me the first question."
+            
+            let reply = try await coach.converse(session: &session, userMessage: initialUserMsg)
+            
+            showRecipeResult = false
+            recipeSession = session
+            currentSavedDishId = UUID()
+            saveCurrentSession()
+            showCoachChat = true
+            SoloChefLog.info("flow: coach chat opened (ask-by-name) dish=\(trimmed)")
 
-        let intro = "Great choice! I'll walk you through making \(trimmed). \(confirmation)"
-        initialCoachSpeakScheduled = true
-        Task {
-            await speakCoachAndListen(intro)
-            initialCoachSpeakScheduled = false
+            if !isVoiceAgentActive {
+                initialCoachSpeakScheduled = true
+                Task {
+                    await speakCoachAndListen(reply.spokenText)
+                    initialCoachSpeakScheduled = false
+                }
+            }
+        } catch {
+            SoloChefLog.error("flow: ask-by-name converse failed — \(error)")
+            lastError = error.localizedDescription
         }
     }
 

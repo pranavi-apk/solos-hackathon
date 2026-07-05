@@ -139,6 +139,7 @@ struct KitchenView: View {
 
     private var newDishButton: some View {
         Button {
+            model.startNewDish()
             showNewDishCapture = true
         } label: {
             Label("New dish", systemImage: "plus.circle.fill")
