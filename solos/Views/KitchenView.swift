@@ -57,8 +57,8 @@ struct KitchenView: View {
         .sheet(isPresented: $showLanguagePicker) {
             LanguagePickerView()
         }
-        .navigationDestination(isPresented: $model.showCoachChat) {
-            CoachChatView(model: model)
+        .navigationDestination(isPresented: $model.isVoiceAgentActive) {
+            VoiceAgentView(model: model, mode: model.voiceAgentMode)
         }
         .navigationDestination(isPresented: $model.showRecipeResult) {
             if let session = model.recipeSession {

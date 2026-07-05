@@ -24,13 +24,15 @@
     <string>Solos uses Bluetooth to connect to your glasses.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>Solos uses Bluetooth to connect to your glasses.</string>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>Solos uses your local network to download photos from the glasses.</string>
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <true/>
-    </dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Solos uses your local network to download photos from the glasses.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SoloChef uses the microphone to listen to your voice commands and cooking questions through the glasses.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>UILaunchScreen</key>

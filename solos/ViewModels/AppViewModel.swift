@@ -19,6 +19,8 @@ final class AppViewModel {
     var recipeSession: RecipeSession?
     var showRecipeResult = false
     var showCoachChat = false
+    var isVoiceAgentActive = false
+    var voiceAgentMode: VoiceAgentController.Mode = .askChef
     var shouldShowNewDishCapture = false
     var lastCapturedThumbnail: UIImage?
     var currentSavedDishId: UUID?
@@ -418,10 +420,12 @@ final class AppViewModel {
         SoloChefLog.info("flow: coach chat opened dish=\(dishName)")
 
         let identification = "I've identified this as \(dishName). \(confirmation)"
-        initialCoachSpeakScheduled = true
-        Task {
-            await speakCoachAndListen(identification)
-            initialCoachSpeakScheduled = false
+        if !isVoiceAgentActive {
+            initialCoachSpeakScheduled = true
+            Task {
+                await speakCoachAndListen(identification)
+                initialCoachSpeakScheduled = false
+            }
         }
     }
 
@@ -542,7 +546,7 @@ final class AppViewModel {
         currentSavedDishId = saved.id
         lastCapturedThumbnail = KitchenStore.shared.loadThumbnail(for: saved)
         showRecipeResult = false
-        showCoachChat = true
+        isVoiceAgentActive = true
         lastError = nil
     }
 

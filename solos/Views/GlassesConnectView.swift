@@ -77,11 +77,6 @@ struct GlassesConnectView: View {
                     logoView
                         .padding(.top, 16)
 
-                    Text("SoloChef")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.top, 4)
-
                     VStack(spacing: 16) {
                         statusCard(
                             title: model.connectedGlassesName ?? "Solos AirGoV2",
@@ -234,7 +229,6 @@ struct GlassesConnectView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 160, height: 110)
-                .shadow(color: .orange.opacity(0.45), radius: 12, y: 6)
         } else {
             Image(systemName: "glasses")
                 .resizable()

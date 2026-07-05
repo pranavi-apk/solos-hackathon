@@ -69,7 +69,7 @@ enum SoloChefLog {
 }
 
 // MARK: - RecipeSession Phase
-enum RecipePhase {
+enum RecipePhase: String, Codable {
     case idle
     case confirming
     case questioning
@@ -79,20 +79,20 @@ enum RecipePhase {
 }
 
 // MARK: - RecipeMessage
-struct RecipeMessage: Identifiable, Equatable {
-    let id = UUID()
+struct RecipeMessage: Identifiable, Equatable, Codable {
+    var id = UUID()
     let role: Role
     let content: String
     
-    enum Role {
+    enum Role: String, Codable {
         case user
         case assistant
     }
 }
 
 // MARK: - RecipeSession
-struct RecipeSession: Identifiable, Equatable {
-    let id = UUID()
+struct RecipeSession: Identifiable, Equatable, Codable {
+    var id = UUID()
     let dishName: String
     let photoAnalysis: String
     var phase: RecipePhase
@@ -101,7 +101,11 @@ struct RecipeSession: Identifiable, Equatable {
     var recipeText: String = ""
     
     var confirmationPrompt: String {
-        "I've identified this as \(dishName). Would you like me to walk you through making it?"
+        if LanguageManager.shared.current == .cantonese {
+            return "我識別到呢道菜係 \(dishName)。你想我教你點煮嗎？"
+        } else {
+            return "I've identified this as \(dishName). Would you like me to walk you through making it?"
+        }
     }
     
     func currentIngredientPrompt() -> String? {
@@ -114,7 +118,7 @@ struct RecipeSession: Identifiable, Equatable {
 }
 
 // MARK: - SavedDishSession
-struct SavedDishSession: Identifiable, Equatable {
+struct SavedDishSession: Identifiable, Equatable, Codable {
     let id: UUID
     let dishName: String
     let createdAt: Date
@@ -161,24 +165,75 @@ enum GeminiAPIHelper {
 final class KitchenStore {
     static let shared = KitchenStore()
     
+    private let sessionsKey = "saved_dish_sessions_v1"
+    
+    private func documentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    
     func loadAll() -> [SavedDishSession] {
-        []
+        guard let data = UserDefaults.standard.data(forKey: sessionsKey) else { return [] }
+        do {
+            let decoder = JSONDecoder()
+            let decoded = try decoder.decode([SavedDishSession].self, from: data)
+            return decoded.sorted(by: { $0.updatedAt > $1.updatedAt })
+        } catch {
+            SoloChefLog.error("store: failed to decode sessions — \(error)")
+            return []
+        }
     }
     
     func save(_ session: SavedDishSession) {
-        
+        var all = loadAll()
+        if let idx = all.firstIndex(where: { $0.id == session.id }) {
+            all[idx] = session
+        } else {
+            all.append(session)
+        }
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(all)
+            UserDefaults.standard.set(data, forKey: sessionsKey)
+            SoloChefLog.info("store: saved session \(session.id)")
+        } catch {
+            SoloChefLog.error("store: failed to encode session \(session.id) — \(error)")
+        }
     }
     
     func delete(id: UUID) {
-        
+        var all = loadAll()
+        all.removeAll(where: { $0.id == id })
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(all)
+            UserDefaults.standard.set(data, forKey: sessionsKey)
+            // also remove thumbnail if any
+            let fileURL = documentsDirectory().appendingPathComponent("\(id.uuidString).jpg")
+            try? FileManager.default.removeItem(at: fileURL)
+            SoloChefLog.info("store: deleted session \(id)")
+        } catch {
+            SoloChefLog.error("store: failed to save after deleting \(id) — \(error)")
+        }
     }
     
     func saveThumbnail(_ image: UIImage, for id: UUID) -> String? {
-        nil
+        guard let data = image.jpegData(compressionQuality: 0.8) else { return nil }
+        let filename = "\(id.uuidString).jpg"
+        let fileURL = documentsDirectory().appendingPathComponent(filename)
+        do {
+            try data.write(to: fileURL)
+            SoloChefLog.info("store: saved thumbnail to \(filename)")
+            return filename
+        } catch {
+            SoloChefLog.error("store: failed to write thumbnail — \(error)")
+            return nil
+        }
     }
     
     func loadThumbnail(for session: SavedDishSession) -> UIImage? {
-        nil
+        guard let filename = session.thumbnailFilename else { return nil }
+        let fileURL = documentsDirectory().appendingPathComponent(filename)
+        return UIImage(contentsOfFile: fileURL.path)
     }
 }
 
@@ -241,23 +296,75 @@ final class MockGlassesService: GlassesService {
 
 // MARK: - SpeechService
 @MainActor
-final class SpeechService {
+final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
     static let shared = SpeechService()
     
     var isSpeaking: Bool = false
     var wasInterrupted: Bool = false
     
+    private let synthesizer = AVSpeechSynthesizer()
+    private var continuation: CheckedContinuation<Void, Never>?
+    
+    override private init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+    
     func speak(_ text: String) async {
         isSpeaking = true
         wasInterrupted = false
-        // Simple placeholder - just wait a bit
-        try? await Task.sleep(for: .milliseconds(500))
+        
+        let utterance = AVSpeechUtterance(string: text)
+        let langCode: String
+        switch LanguageManager.shared.current {
+        case .english: langCode = "en-US"
+        case .cantonese: langCode = "zh-HK"
+        }
+        
+        // Prioritize premium, then enhanced voices for more natural/less robotic accents
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.lowercased() == langCode.lowercased() }
+        let selectedVoice = voices.first { $0.quality == .premium }
+            ?? voices.first { $0.quality == .enhanced }
+            ?? AVSpeechSynthesisVoice(language: langCode)
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        
+        utterance.voice = selectedVoice
+        
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            self.continuation = continuation
+            synthesizer.speak(utterance)
+        }
+        
         isSpeaking = false
     }
     
     func stopSpeaking() {
         wasInterrupted = true
+        synthesizer.stopSpeaking(at: .immediate)
         isSpeaking = false
+        if let continuation = self.continuation {
+            self.continuation = nil
+            continuation.resume()
+        }
+    }
+    
+    // MARK: - AVSpeechSynthesizerDelegate
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if let continuation = self.continuation {
+                self.continuation = nil
+                continuation.resume()
+            }
+        }
+    }
+    
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if let continuation = self.continuation {
+                self.continuation = nil
+                continuation.resume()
+            }
+        }
     }
 }
 
@@ -424,8 +531,11 @@ final class CookingCoachService {
         session.messages.append(RecipeMessage(role: .user, content: userMessage))
         
         // 2. Build instructions & history context
+        let currentLanguageName = LanguageManager.shared.current == .cantonese ? "Cantonese" : "English"
         let systemInstruction = """
         You are "SoloChef", a warm, enthusiastic, and highly professional AI Cooking Coach. The user is wearing smart glasses, so your spoken answers must be very concise (usually 1-3 sentences), friendly, and direct.
+
+        You MUST respond, guide the user, and write all parts of your response (especially the "spokenText" and "recipeText" fields) entirely in the language: \(currentLanguageName) (if Cantonese, speak/write only in Cantonese using Traditional Chinese HK-style characters; if English, speak/write only in English).
 
         We are cooking the dish: "\(session.dishName)".
         Our current session phase is: "\(session.phase)".
@@ -436,17 +546,21 @@ final class CookingCoachService {
         ### Conversation flow:
         1. "confirming":
            - The user has been presented with the dish and asked if they want to cook it.
-           - If they say yes or express interest, move to "questioning" (or "gatheringIngredients" if they are in a rush).
+           - If they say yes or express interest, move to "questioning".
            - If they say no or want to cook something else, set "wantsNewDish" = true, suggest starting over, and keep phase as "confirming" or "idle".
         2. "questioning":
-           - Ask 1 or 2 high-value questions to personalize the recipe (e.g. dietary restrictions, portion sizes, experience level).
-           - Once they answer or if they want to skip, move to "gatheringIngredients".
+           - You MUST ask a minimum of 2 and maximum of 5 questions regarding the dish to personalize the recipe (e.g. portion size/how many people, dietary restrictions, spice level or sweetness level depending on the dish).
+           - Ask them one or two at a time, or all together. Keep count in "clarifyingQuestionsAsked".
+           - Once you have asked at least 2 questions and got answers, move to "gatheringIngredients".
         3. "gatheringIngredients":
-           - Give them the list of ingredients needed. Speak a friendly summary (e.g. "You'll need tomatoes, garlic, olive oil, and spaghetti. Do you have these?").
-           - If they have them, move to "cookingSteps".
+           - You MUST read the ingredients one by one, not all at once.
+           - For the first ingredient, state: "Let's check the ingredients. The first is [Ingredient]. Do you have that?"
+           - For each subsequent ingredient, wait for the user to say yes/got it, then read the next ingredient.
+           - If they have all ingredients, say: "Perfect! Now I will tell you how to prepare the dish. I will guide you. Tell me yes if you want to begin, or ready to start." then transition to phase "cookingSteps".
         4. "cookingSteps":
+           - If the user says yes/ready to begin for the first time in this phase, give the first step.
            - Guide them step-by-step. Provide ONE step at a time, keeping it brief and easy to follow.
-           - Wait for them to say "next", "ready", "done", or ask a question before giving the next step.
+           - Wait for them to say "next", "ready", "done", "yes", or ask a question before giving the next step.
            - When all steps are completed, move to "recipeReady".
         5. "recipeReady":
            - The cooking is complete! Congratulate them.
@@ -829,14 +943,16 @@ final class SolosGlassesService: GlassesService {
     private var sdkScanner: SolosAirGoSDK.Scanner?
     private(set) var glasses: SolosGlasses?
 
-    var isConnected: Bool { glasses?.status == .connected }
-    var deviceName: String? { glasses?.name }
-    var isCameraReady: Bool { glasses?.camera != nil }
-    var isWifiConnected: Bool { glasses?.wifi?.status == .connected }
+    private var resolvedGlasses: SolosGlasses? { glasses ?? SolosConnectionManager.shared.connectedGlasses }
+
+    var isConnected: Bool { resolvedGlasses?.status == .connected }
+    var deviceName: String? { resolvedGlasses?.name }
+    var isCameraReady: Bool { resolvedGlasses?.camera != nil }
+    var isWifiConnected: Bool { resolvedGlasses?.wifi?.status == .connected }
 
     #if !targetEnvironment(simulator)
     /// Exposed so views can attach the glasses mic to SpeechInputService.
-    var microphone: Microphone? { glasses?.audio?.microphone }
+    var microphone: Microphone? { resolvedGlasses?.audio?.microphone }
     #endif
 
     init() {
@@ -893,15 +1009,16 @@ final class SolosGlassesService: GlassesService {
     }
 
     func disconnect() {
-        guard let glasses else { return }
-        SoloChefLog.info("glasses: disconnect()")
-        Task { await glasses.disconnect() }
-        self.glasses = nil
-        SolosConnectionManager.shared.publishDisconnected()
+        if let glasses {
+            SoloChefLog.info("glasses: disconnect()")
+            Task { await glasses.disconnect() }
+            self.glasses = nil
+        }
+        SolosConnectionManager.shared.disconnect()
     }
 
     func takePhoto() async throws -> UIImage {
-        guard let glasses, isConnected else { throw GlassesServiceError.notConnected }
+        guard let glasses = resolvedGlasses, isConnected else { throw GlassesServiceError.notConnected }
         guard let camera = glasses.camera else { throw GlassesServiceError.cameraUnavailable }
 
         let config = PhotoConfiguration.highQualityConfiguration(resolution: ._1280_960)

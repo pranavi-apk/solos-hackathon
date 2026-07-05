@@ -19,6 +19,8 @@ enum VoiceIntentDetector {
             "tell me how", "how do i make", "how do i cook", "how to make", "how to cook",
             "what is this", "what's this", "identify", "take a photo", "take photo",
             "snap", "help me cook", "recipe", "teach me", "show me how",
+            "what this is", "tell me what this is", "what it is", "tell me what it is",
+            "what do you see", "what's in front of me", "what is in front of me",
         ],
         .cantonese: [
             // Traditional Chinese Cantonese phrases

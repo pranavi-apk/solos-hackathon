@@ -5,15 +5,6 @@ struct NewDishCaptureView: View {
     var onDismiss: () -> Void
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showAskSheet = false
-    @State private var navigateToSnap = false
-    @StateObject private var speechInput = SpeechInputService()
-    @State private var hasAutoStartedListening = false
-
-    private var passiveVoiceActive: Bool {
-        model.glasses.isConnected && !model.showCoachChat
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
@@ -62,28 +53,12 @@ struct NewDishCaptureView: View {
                     .padding(.bottom, 8)
             }
 
-            // ── Listening indicator ───────────────────────────────────────
-            if speechInput.isListening {
-                HStack(spacing: 8) {
-                    Image(systemName: "waveform.and.mic")
-                        .foregroundStyle(.orange)
-                        .symbolEffect(.variableColor.iterative)
-                    Text(speechInput.transcript.isEmpty ? "Listening…" : speechInput.transcript)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                .padding(.bottom, 16)
-            }
-
             // ── Action buttons ────────────────────────────────────────────
             VStack(spacing: 12) {
                 // Primary: snap with glasses
                 Button {
-                    navigateToSnap = true
+                    model.voiceAgentMode = .snapWithGlasses
+                    model.isVoiceAgentActive = true
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "eyeglasses")
@@ -105,11 +80,12 @@ struct NewDishCaptureView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.orange)
-                .disabled(model.isBusy || !model.glasses.isConnected || !model.isGlassesWifiConnected)
+                .disabled(model.isBusy || !model.glasses.isConnected)
 
                 // Secondary: ask by name
                 Button {
-                    showAskSheet = true
+                    model.voiceAgentMode = .askChef
+                    model.isVoiceAgentActive = true
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "mic.fill")
@@ -142,106 +118,15 @@ struct NewDishCaptureView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") {
-                    speechInput.stopListening()
                     onDismiss()
                     dismiss()
                 }
             }
         }
-        .sheet(isPresented: $showAskSheet) {
-            AskChefSheet(model: model, onDismiss: {
-                showAskSheet = false
-            })
-        }
-        .navigationDestination(isPresented: $navigateToSnap) {
-            GlassesSnapWaitView(model: model, onDismiss: {
-                navigateToSnap = false
-                onDismiss()
-            })
-        }
-        .navigationDestination(isPresented: $model.showCoachChat) {
-            CoachChatView(model: model)
-        }
-        .onChange(of: model.showCoachChat) { _, showing in
-            if showing {
-                speechInput.stopListening()
+        .onChange(of: model.isVoiceAgentActive) { _, active in
+            if active {
                 onDismiss()
                 dismiss()
-            }
-        }
-        .task {
-            guard !hasAutoStartedListening else { return }
-            hasAutoStartedListening = true
-            await startAutoListening()
-        }
-        .onDisappear {
-            speechInput.stopListening()
-        }
-    }
-
-    // MARK: - Auto listening
-
-    private func startAutoListening() async {
-        #if !targetEnvironment(simulator)
-        if let service = model.glasses as? SolosGlassesService {
-            speechInput.attachGlassesMicrophone(service.microphone)
-        }
-        #endif
-
-        let authorized = await speechInput.requestAuthorization()
-        guard authorized else {
-            SoloChefLog.warning("voice: mic permission not granted — auto-listen skipped")
-            return
-        }
-
-        await startListeningLoop()
-    }
-
-    private func startListeningLoop() async {
-        guard !model.isBusy else { return }
-
-        do {
-            try await speechInput.startListening(allowPhoneFallback: true, micOwner: .passiveListen)
-        } catch {
-            SoloChefLog.error("voice: auto-listen start failed — \(error.localizedDescription)")
-            return
-        }
-
-        speechInput.onFinalTranscript = { text in
-            handleVoiceTranscript(text)
-        }
-    }
-
-    private func handleVoiceTranscript(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            // Restart listening if nothing was said
-            if !model.isBusy { Task { await startListeningLoop() } }
-            return
-        }
-
-        let intent = VoiceIntentDetector.detectIntent(in: trimmed, appInForeground: true)
-        switch intent {
-        case .takePhoto, .identifyAndCoach:
-            SoloChefLog.info("voice: auto snap triggered — \(trimmed.prefix(60))")
-            if model.glasses.isConnected && model.isGlassesWifiConnected {
-                navigateToSnap = true
-            }
-        case .tellRecipe:
-            if model.glasses.isConnected && model.isGlassesWifiConnected {
-                navigateToSnap = true
-            }
-        case .none:
-            // Treat as a dish name
-            SoloChefLog.info("voice: auto ask-by-name — \(trimmed.prefix(60))")
-            Task { await model.askDishByName(trimmed) }
-        }
-
-        // Restart listening after a short delay if still on this screen
-        if !model.isBusy && !navigateToSnap && !model.showCoachChat {
-            Task {
-                try? await Task.sleep(for: .seconds(1))
-                await startListeningLoop()
             }
         }
     }
