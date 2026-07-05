@@ -1,0 +1,6 @@
+framework module SolosAirGoSDK {
+  umbrella header "SolosAirGoSDK.h"
+  export *
+
+  module * { export * }
+}

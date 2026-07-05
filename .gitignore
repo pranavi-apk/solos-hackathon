@@ -1,0 +1,30 @@
+# Secrets
+solos/Config/Secrets.swift
+solos/Config/gemini-service-account.json
+still-algebra-501109-n0-1727d4e61037.json
+
+# Xcode user data
+xcuserdata/
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+
+# Build products
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# macOS
+.DS_Store
