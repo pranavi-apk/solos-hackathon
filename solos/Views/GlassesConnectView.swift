@@ -72,7 +72,7 @@ struct GlassesConnectView: View {
                 Color.black.ignoresSafeArea()
 
                 VStack(spacing: 32) {
-                    Spacer().frame(height: 32)
+                    Spacer()
 
                     logoView
                         .padding(.top, 16)
