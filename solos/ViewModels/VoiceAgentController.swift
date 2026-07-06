@@ -29,6 +29,7 @@ final class VoiceAgentController {
     private var hasStarted = false
     private var isActive = false
     private var hasTakenPhoto = false
+    private var bargeInPending = false
 
     init(mode: Mode, model: AppViewModel) {
         self.mode = mode
@@ -122,11 +123,12 @@ final class VoiceAgentController {
 
     private func handleBargeIn() {
         guard state == .speaking else { return }
-        SoloChefLog.info("voice-agent: barge-in detected")
+        SoloChefLog.info("voice-agent: barge-in detected — stopping TTS, will listen for user")
+        bargeInPending = true
         SpeechService.shared.stopSpeaking()
         model.handleBargeIn()
-        state = .listening
-        Task { await startListening() }
+        // Don't set state here — speak() will check bargeInPending when it returns
+        // and transition correctly to .listening without losing context
     }
 
     // MARK: - Transcript handling
@@ -137,12 +139,11 @@ final class VoiceAgentController {
 
         transcript = trimmed
 
-        // If we're speaking and user talks, barge-in
-        if state == .speaking {
-            handleBargeIn()
-            return
-        }
-
+        // If the user speaks while agent is speaking, the energy-based barge-in monitor
+        // fires onBargeInDetected → handleBargeIn() which sets bargeInPending.
+        // speak() will then call startListening() once TTS stops, so the user can
+        // speak again. Any transcript arriving while still in .speaking state is
+        // safely dropped here — it was the energy burst that triggered barge-in detection.
         guard state == .listening else { return }
 
         state = .thinking
@@ -150,6 +151,12 @@ final class VoiceAgentController {
         SoloChefLog.info("voice-agent: transcript=\"\(trimmed.prefix(120))\"")
 
         await speechInput.stopBargeInMonitoring()
+
+        // Reset hasTakenPhoto if the session was cleared (new dish started)
+        if model.recipeSession == nil && hasTakenPhoto {
+            hasTakenPhoto = false
+            SoloChefLog.info("voice-agent: new dish detected — resetting photo state")
+        }
 
         if mode == .snapWithGlasses && !hasTakenPhoto {
             await handleSnapFlow(transcript: trimmed)
@@ -241,8 +248,9 @@ final class VoiceAgentController {
 
                 let isCantonese = LanguageManager.shared.current == .cantonese
                 if reply.wantsNewDish {
-                    // User wants a new dish — reset and ask what they want
+                    // User wants a new dish — reset session AND photo state for fresh start
                     model.startNewDish()
+                    hasTakenPhoto = false
                     let wantsNewMsg = isCantonese
                         ? "\(reply.spokenText) 你想改煮啲咩呢？"
                         : "\(reply.spokenText) What would you like to cook instead?"
@@ -287,6 +295,7 @@ final class VoiceAgentController {
     private func speak(_ text: String) async {
         guard isActive else { return }
         state = .speaking
+        bargeInPending = false
         statusMessage = "Speaking..."
         SoloChefLog.info("voice-agent: speaking=\"\(text.prefix(120))\"")
 
@@ -299,7 +308,13 @@ final class VoiceAgentController {
 
         await speechInput.stopBargeInMonitoring()
 
-        if isActive {
+        if bargeInPending {
+            // User spoke during TTS — transition to listening to capture their words
+            SoloChefLog.info("voice-agent: barge-in was pending after speak — resuming listening")
+            bargeInPending = false
+            state = .listening
+            await startListening()
+        } else if isActive {
             state = .idle
             statusMessage = ""
         }
