@@ -151,6 +151,12 @@ final class VoiceAgentController {
 
         await speechInput.stopBargeInMonitoring()
 
+        // If session was cleared (e.g. user tapped "New Dish"), reset so we ask for a fresh photo
+        if model.recipeSession == nil && hasTakenPhoto {
+            hasTakenPhoto = false
+            SoloChefLog.info("voice-agent: new dish detected — resetting to snap mode")
+        }
+
         if mode == .snapWithGlasses && !hasTakenPhoto {
             await handleSnapFlow(transcript: trimmed)
         } else {
@@ -241,8 +247,9 @@ final class VoiceAgentController {
 
                 let isCantonese = LanguageManager.shared.current == .cantonese
                 if reply.wantsNewDish {
-                    // User wants a new dish — reset and ask what they want
+                    // User wants a new dish — reset session and photo state for a clean slate
                     model.startNewDish()
+                    hasTakenPhoto = false
                     let wantsNewMsg = isCantonese
                         ? "\(reply.spokenText) 你想改煮啲咩呢？"
                         : "\(reply.spokenText) What would you like to cook instead?"

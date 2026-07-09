@@ -53,7 +53,7 @@ final class AppViewModel {
     }
 
     var isGlassesWifiConnected: Bool {
-        glasses.isWifiConnected
+        glasses.isWifiConnected || GlassesWiFiMonitor.shared.isConnected
     }
 
     var connectedGlassesName: String? {
@@ -231,9 +231,15 @@ final class AppViewModel {
             #if !targetEnvironment(simulator)
             if let cameraError = error as? SolosCameraError {
                 switch cameraError {
-                case .timeout:
-                    SoloChefLog.info("flow: camera timeout — waiting 2s cooldown before retry")
+                case .timeout, .cameraBusy:
+                    // Camera chip is busy or timed out — wait and retry
+                    SoloChefLog.info("flow: camera \(cameraError) — waiting 2s cooldown before retry")
                     try? await Task.sleep(for: .seconds(2))
+                    return try await glasses.takePhoto()
+                case .photoTakenButUnreachable(let underlying):
+                    // Photo was captured but data transfer over Wi-Fi failed — retry transfer
+                    SoloChefLog.info("flow: photo taken but unreachable (\(underlying.localizedDescription)) — waiting 3s and retrying")
+                    try? await Task.sleep(for: .seconds(3))
                     return try await glasses.takePhoto()
                 default:
                     break
